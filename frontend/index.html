@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bantu Blog — Posts, Comments, Likes & Shares</title>
+<meta name="description" content="A full blog built with Bantu + Sua + SQLite. Create posts, leave comments, hit like, and share.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2310b981'/><text x='16' y='22' font-size='18' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>B</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════ HEADER ═══════ -->
+<header class="header">
+  <div class="header-inner">
+    <a href="/" class="back-link">← Home</a>
+    <div class="brand">
+      <div class="brand-mark">B</div>
+      <div>
+        <h1>Bantu Blog</h1>
+        <p class="tagline">Posts · Comments · Likes · Shares — powered by Bantu + Sua + SQLite</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-primary" onclick="openCreateModal()">+ New Post</button>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════ STATUS BAR ═══════ -->
+<div id="statusBar" class="status-bar">
+  <span id="statusDot" class="status-dot offline"></span>
+  <span id="statusText">Checking backend…</span>
+  <span class="status-stats" id="statusStats"></span>
+</div>
+
+<!-- ═══════ MAIN ═══════ -->
+<main class="main">
+
+  <!-- ─── Stats ─── -->
+  <section class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="stat-value" id="statPosts">—</div><div class="stat-label">Posts</div></div>
+    <div class="stat-card"><div class="stat-value" id="statComments">—</div><div class="stat-label">Comments</div></div>
+    <div class="stat-card"><div class="stat-value" id="statLikes">—</div><div class="stat-label">Likes</div></div>
+    <div class="stat-card"><div class="stat-value" id="statShares">—</div><div class="stat-label">Shares</div></div>
+  </section>
+
+  <!-- ─── Posts List ─── -->
+  <section class="posts-section">
+    <h2 class="section-title">Latest Posts</h2>
+    <div id="postsList" class="posts-list">
+      <div class="loading">Loading posts…</div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════ CREATE POST MODAL ═══════ -->
+<div id="createModal" class="modal-overlay" hidden onclick="if(event.target===this)closeCreateModal()">
+  <div class="modal">
+    <h3>Create a New Post</h3>
+    <form onsubmit="event.preventDefault(); submitPost();">
+      <label>
+        <span>Title</span>
+        <input type="text" id="postTitle" maxlength="120" required placeholder="An interesting title…">
+      </label>
+      <label>
+        <span>Your name</span>
+        <input type="text" id="postAuthor" maxlength="40" placeholder="Anonymous">
+      </label>
+      <label>
+        <span>Body</span>
+        <textarea id="postBody" rows="8" required placeholder="Write your post here…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeCreateModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Publish</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════ POST DETAIL MODAL ═══════ -->
+<div id="detailModal" class="modal-overlay" hidden onclick="if(event.target===this)closeDetailModal()">
+  <div class="modal modal-lg">
+    <div id="detailContent">Loading…</div>
+  </div>
+</div>
+
+<!-- ═══════ TOAST ═══════ -->
+<div id="toast" class="toast" hidden></div>
+
+<footer class="footer">
+  <p>
+    Built with
+    <a href="https://my-project-five-self.vercel.app/" target="_blank">Bantu Language</a> +
+    Sua Framework + SQLite ·
+    Frontend: pure HTML, CSS, JS ·
+    <a href="https://github.com/AsseySilivestir/blog" target="_blank">GitHub</a>
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

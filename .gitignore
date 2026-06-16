@@ -1,0 +1,31 @@
+# Database
+*.db
+*.sqlite
+*.sqlite3
+blog.db
+
+# Bantu build artifacts
+build/
+*.o
+*.obj
+bantu
+bantu.exe
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
