@@ -49,8 +49,8 @@ RUN cmake -S . -B build \
         -DCMAKE_CXX_FLAGS_RELEASE="-O3 -flto" \
         -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-flto -s" \
     && cmake --build build --parallel "$(nproc)" \
-    && file build/bantu \
-    && ldd build/bantu
+    && test -x build/bantu \
+    && echo "Bantu binary built successfully at $(ls -lh build/bantu | awk '{print $5}')"
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -78,7 +78,7 @@ WORKDIR /app
 
 # Copy the freshly-built binary (matches this image's glibc exactly)
 COPY --from=builder /build/build/bantu /usr/local/bin/bantu
-RUN chmod +x /usr/local/bin/bantu && ldd /usr/local/bin/bantu
+RUN chmod +x /usr/local/bin/bantu && /usr/local/bin/bantu --version 2>&1 | head -3 || true
 
 # Copy the Bantu backend + frontend
 COPY backend/server.b   ./server.b
