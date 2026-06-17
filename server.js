@@ -1,35 +1,38 @@
 #!/usr/bin/env node
 // ═══════════════════════════════════════════════════════════════
-//  Bantu Blog — HTTP Server (Node.js wrapper)
+//  Bantu Blog — HTTP Server (Node.js, pure-SQLite, no Bantu binary)
 //  ──────────────────────────────────────────────────────────────
 //  WHY THIS EXISTS
 //  ---------------
 //  The Bantu binary's `sua.server.listen()` registers routes but
 //  does NOT actually start an HTTP listener in the current build
-//  (it's a stub that prints status and returns). To get a fully
-//  working Bantu Blog on Render/Vercel/Docker, this tiny Node.js
-//  wrapper serves the same API against the SAME SQLite database
-//  file (`blog.db`) that the Bantu binary creates and seeds.
+//  (it's a stub that prints status and returns). Also, the Bantu
+//  binary depends on libcurl-gnutls.so.4 which is missing on many
+//  minimal Linux images (Render, Vercel, slim Docker).
 //
-//  WHAT IT DOES
-//  ------------
-//  1. On boot, it calls `bantu run init.b` — a tiny Bantu script
-//     that opens SQLite, creates the schema, and seeds the data
-//     (idempotent — runs only when posts table is empty).
-//  2. Then it starts an HTTP server on PORT (default 8080) with:
-//       GET    /api/health
-//       GET    /api/posts
-//       GET    /api/posts/:id
-//       POST   /api/posts
-//       DELETE /api/posts/:id
-//       POST   /api/posts/:id/comments
-//       POST   /api/posts/:id/like
-//       POST   /api/posts/:id/share
-//       GET    /api/stats
-//     plus CORS + static file serving from ./public
+//  SOLUTION
+//  --------
+//  This pure-Node.js server:
+//    1. Opens the SQLite DB at $BANTU_BLOG_DB (default /data/blog.db)
+//       using better-sqlite3.
+//    2. Creates the schema (posts/comments/likes/shares) DIRECTLY
+//       via SQL — no Bantu binary needed.
+//    3. Seeds 3 sample posts + comments + likes + shares if empty.
+//    4. Serves the API on PORT (default 8080):
+//         GET    /api/health
+//         GET    /api/posts
+//         GET    /api/posts/:id
+//         POST   /api/posts
+//         DELETE /api/posts/:id
+//         POST   /api/posts/:id/comments
+//         POST   /api/posts/:id/like
+//         POST   /api/posts/:id/share
+//         GET    /api/stats
+//       plus CORS + static file serving from PUBLIC_DIR.
 //
-//  The DB schema is identical to backend/schema.sql so the same
-//  `blog.db` file can also be opened with the `sqlite3` CLI.
+//  The DB schema is byte-identical to backend/schema.sql so the
+//  same `blog.db` file can also be opened with `bantu run server.b`
+//  or the `sqlite3` CLI.
 // ═══════════════════════════════════════════════════════════════
 
 'use strict';
@@ -38,119 +41,160 @@ const http  = require('http');
 const fs    = require('fs');
 const path  = require('path');
 const url   = require('url');
-const os    = require('os');
-const { execFileSync, spawnSync } = require('child_process');
 
 // ─── Config ────────────────────────────────────────────────────
 const PORT       = parseInt(process.env.PORT || '8080', 10);
 const DB_PATH    = process.env.BANTU_BLOG_DB || '/data/blog.db';
-const PUBLIC_DIR = process.env.BANTU_BLOG_PUBLIC || '/app/public';
-const BANTU_BIN  = process.env.BANTU_BIN || 'bantu';
-const INIT_SCRIPT = path.join(__dirname, 'init.b');
+const PUBLIC_DIR = process.env.BANTU_BLOG_PUBLIC
+                    || path.join(__dirname, 'public');
 
 console.log('═══════════════════════════════════════════');
-console.log('  Bantu Blog — HTTP Server (Node wrapper)');
+console.log('  Bantu Blog — HTTP Server (Node.js, pure SQLite)');
 console.log('═══════════════════════════════════════════');
 console.log(`  Port:      ${PORT}`);
 console.log(`  Database:  ${DB_PATH}`);
 console.log(`  Public:    ${PUBLIC_DIR}`);
 console.log('');
 
-// ─── Step 1: Initialize the SQLite DB via the Bantu binary ─────
-// The Bantu binary opens SQLite, creates the schema, seeds data.
-// We run a tiny init.b that does only that (no server.listen call).
-function initDatabase() {
-    if (!fs.existsSync(INIT_SCRIPT)) {
-        console.log(`[init] No ${INIT_SCRIPT} found, skipping Bantu init.`);
-        return;
-    }
-    // Rewrite init.b's $dbPath line to point at our target DB
-    // (Bantu doesn't expose getenv() to scripts, so we sed at runtime.)
-    const initSrc = fs.readFileSync(INIT_SCRIPT, 'utf8');
-    const runtimeInit = initSrc.replace(
-        /^string \$dbPath = .*$/m,
-        `string $dbPath = "${DB_PATH}";`
-    );
-    const runtimeInitPath = path.join(os.tmpdir(), 'bantu-blog-init.runtime.b');
-    fs.writeFileSync(runtimeInitPath, runtimeInit);
-
-    try {
-        console.log(`[init] Running: ${BANTU_BIN} run ${runtimeInitPath}`);
-        const out = execFileSync(BANTU_BIN, ['run', runtimeInitPath], {
-            encoding: 'utf8',
-            timeout: 30000,
-            env: { ...process.env },
-        });
-        const lines = (out || '').split('\n').filter(Boolean).slice(-8);
-        for (const ln of lines) console.log('  ' + ln);
-        console.log('[init] Done.');
-    } catch (e) {
-        console.warn('[init] Bantu init failed (continuing with empty/existsing DB):', e.message);
-    }
-}
-initDatabase();
-
-// ─── Step 2: Open the same SQLite DB from Node ────────────────
-// We use better-sqlite3 if available; otherwise fall back to a
-// pure-JS implementation that wraps the `sqlite3` CLI for queries.
-let db = null;
-let dbBackend = null;
+// ─── Ensure the DB directory exists ────────────────────────────
+const dbDir = path.dirname(DB_PATH);
 try {
-    const Database = require('better-sqlite3');
-    db = new Database(DB_PATH, { fileMustExist: false });
-    db.pragma('journal_mode = WAL');
-    dbBackend = 'better-sqlite3';
-    console.log(`[db] Opened with better-sqlite3: ${DB_PATH}`);
+    if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+        console.log(`[db] Created directory: ${dbDir}`);
+    }
 } catch (e) {
-    console.log(`[db] better-sqlite3 not available (${e.message}), using sqlite3 CLI fallback.`);
-    dbBackend = 'cli';
+    console.warn(`[db] Could not create ${dbDir}: ${e.message}`);
 }
 
-// ─── DB helpers ────────────────────────────────────────────────
+// ─── Open SQLite via better-sqlite3 ────────────────────────────
+const Database = require('better-sqlite3');
+const db = new Database(DB_PATH, { fileMustExist: false });
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+console.log(`[db] Opened with better-sqlite3: ${DB_PATH}`);
+
+// ─── Initialize schema (idempotent) ────────────────────────────
+function initSchema() {
+    console.log('[init] Creating schema if missing...');
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS posts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title       TEXT NOT NULL,
+            body        TEXT NOT NULL,
+            author      TEXT NOT NULL DEFAULT 'Anonymous',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS comments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id     INTEGER NOT NULL,
+            author      TEXT NOT NULL,
+            body        TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);
+
+        CREATE TABLE IF NOT EXISTS likes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id     INTEGER NOT NULL,
+            author      TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(post_id, author),
+            FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id);
+
+        CREATE TABLE IF NOT EXISTS shares (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id     INTEGER NOT NULL,
+            platform    TEXT NOT NULL DEFAULT 'copy',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_shares_post_id ON shares(post_id);
+    `);
+    console.log('[init] Schema ready (posts, comments, likes, shares)');
+
+    // ─── Seed if empty ────────────────────────────────────────
+    const row = db.prepare('SELECT COUNT(*) AS n FROM posts').get();
+    if (row.n === 0) {
+        console.log('[init] Seeding initial blog posts...');
+        const insertPost = db.prepare(
+            "INSERT INTO posts (title, body, author) VALUES (?, ?, ?)"
+        );
+        insertPost.run(
+            'Welcome to Bantu Blog',
+            "This is the very first post on our Bantu-powered blog. Built with the Bantu Programming Language, the Sua web framework, and SQLite.\n\nBantu is designed for African developers, by African developers. It uses familiar C-like syntax with English keywords, supports classes and inheritance, and includes a full web framework called Sua with HTTP routing, SQLite, and PostgreSQL out of the box.\n\nCreate your own posts, leave comments, hit like, and share with friends!",
+            'Silivestir'
+        );
+        insertPost.run(
+            'Why Bantu?',
+            "Bantu is a programming language designed for African developers, by African developers. Here are the top reasons to use it:\n\n1. Familiar syntax - C-like with variable prefixes\n2. English keywords - print, def, class, each, return\n3. Classes and inheritance - full OOP support\n4. Sua framework - Express-like web server built-in\n5. Database support - SQLite and PostgreSQL out of the box\n6. Real-time ready - channels, WebRTC signaling, STUN/TURN\n\nGive it a try today!",
+            'Silivestir'
+        );
+        insertPost.run(
+            'Building with Sua',
+            "Sua is the Bantu web framework. It gives you:\n\n- Express-like routing: sua.server.get, sua.server.post\n- Database access: sua.sqlite.exec, sua.sqlite.query\n- HTTP client: sua.http.get, sua.http.post\n- Real-time: channels, broadcast, WebRTC signaling\n\nThis entire blog runs on Sua. The backend is a single Bantu file (server.b) and the frontend is pure HTML, CSS, and JavaScript - no framework needed.",
+            'Alice'
+        );
+
+        const insertComment = db.prepare(
+            "INSERT INTO comments (post_id, author, body) VALUES (?, ?, ?)"
+        );
+        insertComment.run(1, 'Alice',   'Welcome! Excited to see Bantu growing.');
+        insertComment.run(1, 'Bob',     'This is amazing work, Silivestir!');
+        insertComment.run(2, 'Charlie', 'Finally a language that feels like home.');
+        insertComment.run(3, 'Dave',    'Sua looks really clean. Going to try it tonight.');
+
+        const insertLike = db.prepare(
+            "INSERT INTO likes (post_id, author) VALUES (?, ?)"
+        );
+        insertLike.run(1, 'alice');
+        insertLike.run(1, 'bob');
+        insertLike.run(1, 'charlie');
+        insertLike.run(2, 'alice');
+        insertLike.run(2, 'dave');
+        insertLike.run(3, 'bob');
+        insertLike.run(3, 'eve');
+
+        const insertShare = db.prepare(
+            "INSERT INTO shares (post_id, platform) VALUES (?, ?)"
+        );
+        insertShare.run(1, 'twitter');
+        insertShare.run(1, 'facebook');
+        insertShare.run(1, 'copy');
+        insertShare.run(2, 'twitter');
+        insertShare.run(2, 'copy');
+        insertShare.run(3, 'whatsapp');
+
+        console.log('[init] Seeded 3 posts, 4 comments, 7 likes, 6 shares');
+    } else {
+        console.log(`[init] Database already has ${row.n} posts, skipping seed`);
+    }
+    console.log('[init] Done.');
+}
+try {
+    initSchema();
+} catch (e) {
+    console.error('[init] FATAL: schema init failed:', e.message);
+    console.error(e.stack);
+    process.exit(1);
+}
+
+// ─── DB query helpers (better-sqlite3 thin wrappers) ───────────
+// dbAll(sql, params[]) -> array of rows
+// dbRun(sql, params[]) -> { changes, lastInsertRowid }
 function dbAll(sql, params = []) {
-    if (dbBackend === 'better-sqlite3') {
-        return db.prepare(sql).all(...params);
-    }
-    // CLI fallback: serialize params and run `sqlite3 -json`
-    const args = [DB_PATH, '-json', sql];
-    let stdin = '';
-    if (params.length) {
-        // Use .param notation via sqlite3 CLI
-        // For simplicity, we'll inline-escape
-        const escaped = sql.replace(/\?/g, () => {
-            const p = params.shift();
-            if (p === null || p === undefined) return 'NULL';
-            if (typeof p === 'number') return String(p);
-            return "'" + String(p).replace(/'/g, "''") + "'";
-        });
-        args[2] = escaped;
-    }
-    const r = spawnSync('sqlite3', args, { encoding: 'utf8' });
-    if (r.status !== 0 && r.stderr) {
-        console.warn('[db] sqlite3 error:', r.stderr);
-    }
-    try { return JSON.parse(r.stdout || '[]'); }
-    catch { return []; }
+    return db.prepare(sql).all(...params);
 }
-
 function dbRun(sql, params = []) {
-    if (dbBackend === 'better-sqlite3') {
-        const stmt = db.prepare(sql);
-        const info = stmt.run(...params);
-        return { changes: info.changes, lastInsertRowid: info.lastInsertRowid };
-    }
-    const escaped = sql.replace(/\?/g, () => {
-        const p = params.shift();
-        if (p === null || p === undefined) return 'NULL';
-        if (typeof p === 'number') return String(p);
-        return "'" + String(p).replace(/'/g, "''") + "'";
-    });
-    const r = spawnSync('sqlite3', [DB_PATH, escaped], { encoding: 'utf8' });
-    // Get last insert rowid
-    const r2 = spawnSync('sqlite3', [DB_PATH, 'SELECT last_insert_rowid() AS id;'], { encoding: 'utf8' });
-    const id = parseInt((r2.stdout || '').trim(), 10) || 0;
-    return { changes: 1, lastInsertRowid: id };
+    const info = db.prepare(sql).run(...params);
+    return { changes: info.changes, lastInsertRowid: info.lastInsertRowid };
 }
+const dbBackend = 'better-sqlite3';
 
 // ─── HTTP helpers ──────────────────────────────────────────────
 function sendJson(res, status, obj) {
