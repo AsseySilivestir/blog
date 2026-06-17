@@ -11,10 +11,18 @@ print "  Bantu + Sua + SQLite";
 print "═══════════════════════════════════════════";
 
 // ─── Configuration ─────────────────────────────────────────────
-// Edit these values to change the database path or server port.
-// (Bantu does not yet expose env() — these are compile-time defaults.)
-string $dbPath = "blog.db";
-string $port   = "8080";
+// Database path: prefer /data/blog.db (Docker/Render persistent volume),
+// fall back to ./blog.db for local dev.
+string $dbPath = "/data/blog.db";
+// Test if /data is writable; if not, use local file
+dict $probe = sua.sqlite.open($dbPath);
+if (!$probe.connected) {
+    $dbPath = "blog.db";
+    print "[INFO] /data not writable, using local: " + $dbPath;
+} else {
+    print "[INFO] Using persistent volume: " + $dbPath;
+}
+string $port = "8080";
 
 print "Database: " + $dbPath;
 print "Opening SQLite...";
