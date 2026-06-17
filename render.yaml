@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════════════
+#  Bantu Blog — Render Blueprint
+#  One-click deploy on Render.
+#
+#  How to use:
+#    1. Push this repo to GitHub
+#    2. Go to https://render.com/i/deploy (or https://dashboard.render.com/select-repo)
+#    3. Pick the AsseySilivestir/blog repo
+#    4. Render reads this render.yaml automatically and creates:
+#         - A Docker web service
+#         - A 1 GB persistent disk for the SQLite DB
+#         - HTTPS endpoint
+#    5. Your blog will be live at https://bantu-blog.onrender.com
+#
+#  Manual deploy alternative:
+#    - Dashboard → New → Web Service
+#    - Pick the repo, Render auto-detects Dockerfile
+#    - Set PORT=8080, BANTU_BLOG_DB=/data/blog.db
+#    - Add a 1 GB disk mounted at /data
+# ═══════════════════════════════════════════════════════════════
+services:
+  - type: web
+    name: bantu-blog
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: BANTU_BLOG_DB
+        value: /data/blog.db
+      - key: BANTU_BLOG_PUBLIC
+        value: /app/public
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: bantu-blog-data
+      mountPath: /data
+      sizeGB: 1

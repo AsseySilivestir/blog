@@ -1,8 +1,9 @@
 # Bantu Blog
 
 A complete blog application with **posts, comments, likes, and shares** — built with the
-[Bantu programming language](https://github.com/AsseySilivestir/bantu-lang) and the **Sua**
-web framework, persisted on **SQLite**.
+[Bantu programming language](https://github.com/AsseySilivestir/bantu-lang), the **Sua**
+web framework, **SQLite** for storage, and a tiny **Node.js HTTP wrapper** (because
+Bantu v1.1.0's `sua.server.listen()` is a stub).
 
 > Bantu is a programming language designed for African developers, by African developers.
 > It uses familiar C-like syntax with English keywords, supports classes and inheritance,
@@ -14,18 +15,26 @@ web framework, persisted on **SQLite**.
 
 ```
 .
-├── backend/                Bantu + Sua backend (server.b)
-│   ├── server.b            The entire API in one Bantu file
+├── Dockerfile              Docker image: Bantu binary + Node.js HTTP wrapper
+├── render.yaml             One-click Render blueprint (web service + 1 GB disk)
+├── vercel.json             Vercel static-hosting config (frontend only)
+├── package.json            Node deps (better-sqlite3)
+├── server.js               Node.js HTTP server (the actual API listener)
+├── init.b                  Bantu script — creates schema + seeds data
+├── .dockerignore
+├── .gitignore
+├── README.md
+├── backend/                Bantu + Sua + SQLite (the language reference impl)
+│   ├── bantu               Linux x86_64 Bantu binary (committed for Docker)
+│   ├── server.b            Original Bantu-only backend (reference)
 │   ├── schema.sql          SQLite schema (for manual inspection)
-│   ├── seed.sql            Seed data (loaded automatically on first run)
-│   ├── start.sh            Convenience wrapper to run the backend
-│   └── README.md           Backend-specific docs
-├── frontend/               Pure HTML + CSS + JS frontend
-│   ├── index.html          Blog UI
-│   ├── style.css           Dark theme styles
-│   └── app.js              API client + localStorage fallback
-├── vercel.json             Vercel static-hosting config
-└── README.md               This file
+│   ├── seed.sql            Seed data
+│   ├── start.sh            Wrapper to run `bantu run server.b` locally
+│   └── README.md
+└── frontend/               Pure HTML + CSS + JS frontend
+    ├── index.html
+    ├── style.css
+    └── app.js              (uses relative API URLs by default)
 ```
 
 ---
@@ -38,36 +47,107 @@ web framework, persisted on **SQLite**.
 - **Shares** — record share events (Twitter, Facebook, WhatsApp, copy-link)
 - **Stats** — aggregate counts across all entities
 - **CORS** — open CORS for easy integration with any frontend
-- **Static serving** — backend serves the frontend from `./public`
+- **Static serving** — backend serves the frontend from `/app/public`
 - **SQLite** — zero-config file database, created automatically on first run
+- **Persistent volume** — `/data/blog.db` survives container restarts on Render
 - **localStorage fallback** — frontend keeps working even when the backend is offline
+- **Healthcheck** — `GET /api/health` returns 200 with version info
 
 ---
 
-## Backend (Bantu + Sua + SQLite)
+## Why Node.js + Bantu in the same container?
 
-### Prerequisites
+The Bantu binary v1.1.0 ships with `sua.server.listen()` as a **stub** — it prints
+"Listening on port 8080" and returns immediately without actually binding a socket.
+The full HTTP server code exists in `bantu-lang/compiler/src/server.hpp` but isn't
+wired up to the script-level `listen()` call.
 
-- **Bantu binary** — install from https://my-project-five-self.vercel.app/
-  (or build from source)
-- *(optional)* `sqlite3` CLI — only if you want to inspect the database manually
+To ship a working blog today, we use a hybrid:
 
-### Run
+| Layer | What it does |
+|-------|--------------|
+| `bantu run init.b` | Opens SQLite, creates schema, seeds sample posts |
+| `node server.js`   | Serves the HTTP API + static frontend against the same `blog.db` |
+
+Both layers share the **same SQLite database file** — so the Bantu binary is a real
+runtime participant (it owns DB initialization), and Node handles HTTP I/O until
+Bantu's `sua.server.listen()` becomes a real listener in a future release.
+
+---
+
+## Deploy to Render (one click)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+
+1. Click the button above (or go to https://render.com/i/deploy)
+2. Pick the `AsseySilivestir/blog` repo
+3. Render reads `render.yaml` and creates:
+   - A Docker web service (free tier)
+   - A 1 GB persistent disk mounted at `/data`
+   - An HTTPS endpoint at `https://bantu-blog.onrender.com`
+4. Click **Deploy** — first build takes ~3 minutes (mostly `apt-get` + `npm install`)
+5. Once healthy, open the URL — your blog is live with real backend + SQLite
+
+### Manual Render deploy
+
+1. https://dashboard.render.com/select-repo
+2. Pick `AsseySilivestir/blog`
+3. Render auto-detects `Dockerfile`
+4. Set environment variables:
+   - `PORT` = `8080`
+   - `BANTU_BLOG_DB` = `/data/blog.db`
+   - `BANTU_BLOG_PUBLIC` = `/app/public`
+5. Add a **disk** (1 GB free) mounted at `/data`
+6. Deploy
+
+---
+
+## Deploy to Vercel (frontend only)
+
+Vercel only runs Node.js serverless functions — it can't run the Bantu binary or
+a long-lived HTTP server. But the static frontend works on Vercel with
+**localStorage fallback** so the demo always works.
+
+1. Push this repo to GitHub (already done if you're reading this on GitHub)
+2. Go to https://vercel.com/new
+3. Import `AsseySilivestir/blog`
+4. Vercel auto-detects it as a static site (no build step)
+5. Click **Deploy** — your blog frontend is live at `https://blog-xxx.vercel.app`
+
+For Vercel + live backend, deploy the backend to Render (above) and set
+`window.BANTU_BLOG_API = 'https://bantu-blog.onrender.com'` in `frontend/index.html`.
+
+---
+
+## Run locally with Docker
 
 ```bash
-cd backend
-bantu run server.b
+docker build -t bantu-blog .
+docker run -p 8080:8080 -v bantu-blog-data:/data bantu-blog
 ```
 
-On first run, Bantu will:
+Then open http://localhost:8080.
 
-1. Create `blog.db` (SQLite file) in the current directory
-2. Create the schema (`posts`, `comments`, `likes`, `shares`)
-3. Seed 3 sample posts with comments, likes, and shares
-4. Register all API routes
-5. Start listening on `http://localhost:8080`
+---
 
-### API endpoints
+## Run locally without Docker
+
+```bash
+# 1. Install Node deps
+npm install
+
+# 2. (Optional) Initialize the DB with the Bantu binary
+bantu run init.b    # creates blog.db in /data (set BANTU_BLOG_DB to override)
+
+# 3. Start the HTTP server
+BANTU_BLOG_DB=./blog.db BANTU_BLOG_PUBLIC=./frontend npm start
+```
+
+Then open http://localhost:8080.
+
+---
+
+## API endpoints
 
 | Method   | Endpoint                       | Description              |
 |----------|--------------------------------|--------------------------|
@@ -80,7 +160,6 @@ On first run, Bantu will:
 | POST     | `/api/posts/:id/like`          | Like / unlike a post     |
 | POST     | `/api/posts/:id/share`         | Record a share           |
 | GET      | `/api/stats`                   | Aggregate stats          |
-| OPTIONS  | `/*`                           | CORS preflight           |
 
 ### Example requests
 
@@ -100,70 +179,6 @@ curl -X POST http://localhost:8080/api/posts/1/comments \
   -H "Content-Type: application/json" \
   -d '{"author":"bob","body":"Nice post!"}'
 ```
-
-### Inspect the database
-
-```bash
-sqlite3 blog.db
-sqlite> .tables
-sqlite> SELECT * FROM posts;
-sqlite> SELECT COUNT(*) FROM likes;
-```
-
-See [`backend/README.md`](./backend/README.md) for full backend docs.
-
----
-
-## Frontend (HTML + CSS + JS)
-
-The frontend is a single-page app with no framework — just vanilla HTML, CSS, and JS.
-
-- **Dark theme** with Bantu-brand orange accents
-- **Auto-detects backend**: tries `http://localhost:8080/api/health` on load
-  - If reachable → live mode (all data comes from the SQLite backend)
-  - If unreachable → demo mode (all data persists to `localStorage` so the UI
-    still works for evaluation)
-
-### Run locally
-
-Just open `frontend/index.html` in a browser, or serve it with any static server:
-
-```bash
-cd frontend
-python3 -m http.server 5173
-# open http://localhost:5173
-```
-
----
-
-## Deploy to Vercel
-
-The frontend is a static site, so Vercel can host it for free.
-
-### Option A — via Vercel dashboard
-
-1. Push this repo to GitHub (already done if you're reading this on GitHub).
-2. Go to https://vercel.com/new
-3. Import the repo
-4. Vercel auto-detects it as a static site (no build step needed)
-5. Click **Deploy**
-
-### Option B — via Vercel CLI
-
-```bash
-npm i -g vercel
-vercel login
-vercel --prod
-```
-
-`vercel.json` is already configured to serve `frontend/` and rewrite routes cleanly.
-
-### Backend on Vercel?
-
-Vercel only runs Node.js serverless functions — it cannot host the Bantu binary.
-The frontend detects this and **falls back to localStorage** so the demo always
-works. To run the real Bantu + SQLite backend, deploy it to any VPS / Render /
-Railway / Fly.io (see `backend/README.md`).
 
 ---
 

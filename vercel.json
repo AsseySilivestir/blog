@@ -1,19 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
+  "public": true,
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/", "destination": "/frontend" },
-    { "source": "/blog", "destination": "/frontend" },
-    { "source": "/blog/:path*", "destination": "/frontend/:path*" },
     { "source": "/style.css", "destination": "/frontend/style.css" },
     { "source": "/app.js", "destination": "/frontend/app.js" },
-    { "source": "/index.html", "destination": "/frontend" }
+    { "source": "/blog", "destination": "/frontend/index.html" },
+    { "source": "/blog/:path*", "destination": "/frontend/:path*" },
+    { "source": "/(.*)", "destination": "/frontend/index.html" }
   ],
   "headers": [
     {
-      "source": "/(.*)",
+      "source": "/api/(.*)",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },

@@ -8,7 +8,8 @@ blog.db
 build/
 *.o
 *.obj
-bantu
+# NOTE: backend/bantu IS committed (the Linux x86_64 binary needed by Docker).
+# Don't add a bare "bantu" ignore rule here.
 bantu.exe
 
 # Node
@@ -29,3 +30,4 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+node_modules/

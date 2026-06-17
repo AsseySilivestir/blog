@@ -1,0 +1,18 @@
+{
+  "name": "bantu-blog",
+  "version": "1.1.0",
+  "description": "Bantu Blog — full blog with posts, comments, likes, shares. Bantu + Sua + SQLite.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "init-db": "bantu run init.b",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0"
+  },
+  "license": "MIT"
+}

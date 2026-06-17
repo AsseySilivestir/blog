@@ -1,0 +1,34 @@
+# Build artifacts
+build/
+*.o
+*.obj
+
+# Local development databases
+*.db
+*.sqlite
+*.sqlite3
+blog.db
+
+# Local test runs
+node_modules/
+.next/
+out/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# CI / deploy metadata
+.vercel
+.env
+.env.local
+.env.*.local

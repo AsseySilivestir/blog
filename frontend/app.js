@@ -5,8 +5,10 @@
    ═══════════════════════════════════════════════════════════════ */
 
 // ─── CONFIG ────────────────────────────────────────────────────
-// When you deploy the Bantu backend somewhere, set this:
-const API_BASE = window.BANTU_BLOG_API || 'http://localhost:8080';
+// When the backend runs on a different origin (e.g. localhost dev),
+// set window.BANTU_BLOG_API explicitly. Otherwise default to same
+// origin (Render/Vercel/Docker all serve frontend + API from one origin).
+const API_BASE = window.BANTU_BLOG_API || '';
 
 // ─── STATE ─────────────────────────────────────────────────────
 let backendOnline = false;
