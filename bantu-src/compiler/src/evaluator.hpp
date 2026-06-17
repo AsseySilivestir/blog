@@ -21,6 +21,7 @@
 #include <random>
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 
 // ─── External Library Headers ───
 #include <curl/curl.h>
@@ -241,11 +242,21 @@ inline std::string bantuUrlDecode(const std::string& s) {
     for (size_t i = 0; i < s.size(); i++) {
         if (s[i] == '+' && i + 1 < s.size()) { out += ' '; }
         else if (s[i] == '%' && i + 2 < s.size()) {
-            char hex[3] = { s[i+1], s[i+2], 0 };
-            char* end = nullptr;
-            long v = std::strtol(hex, &end, 16);
-            if (end && *end == 0) { out += (char)v; i += 2; }
-            else out += s[i];
+            // Manual hex parser (avoids std::strtol → __isoc23_strtol@GLIBC_2.38)
+            auto hexVal = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int hi = hexVal(s[i+1]);
+            int lo = hexVal(s[i+2]);
+            if (hi >= 0 && lo >= 0) {
+                out += (char)((hi << 4) | lo);
+                i += 2;
+            } else {
+                out += s[i];
+            }
         } else out += s[i];
     }
     return out;
@@ -699,7 +710,16 @@ private:
                     ErrorHandler::throwRuntimeError("Modulo by zero", n->line, n->col);
                     return Value();
                 }
-                return Value(std::fmod(left.numberVal, right.numberVal));
+                // Manual modulo (avoids std::fmod@GLIBC_2.38 symbol version requirement)
+                {
+                    double a = left.numberVal, b = right.numberVal;
+                    double q = std::floor(a / b);
+                    double r = a - q * b;
+                    // Match fmod's sign convention: result has same sign as a
+                    if (r < 0 && a >= 0) r += b;
+                    if (r > 0 && a < 0)  r -= b;
+                    return Value(r);
+                }
             case TokenType::EQUALTO: return Value(left.equals(right));
             case TokenType::NOTEQUALTO: return Value(!left.equals(right));
             case TokenType::GREATERTHAN: return Value(left.numberVal > right.numberVal);
@@ -935,7 +955,14 @@ private:
         while (!clStr.empty() && (clStr.front()==' '||clStr.front()=='\t')) clStr.erase(clStr.begin());
         while (!clStr.empty() && (clStr.back()==' '||clStr.back()=='\t'||clStr.back()=='\r')) clStr.pop_back();
         size_t contentLength = 0;
-        try { contentLength = std::stoull(clStr); } catch (...) { return body; }
+        // Manual parse of content-length (avoids std::stoull → __isoc23_strtoull@GLIBC_2.38)
+        contentLength = 0;
+        bool ok = !clStr.empty();
+        for (char c : clStr) {
+            if (c < '0' || c > '9') { ok = false; break; }
+            contentLength = contentLength * 10 + (size_t)(c - '0');
+        }
+        if (!ok) return body;
         // Keep reading until we have the full body
         while (body.size() < contentLength) {
             char buf[8192];
@@ -1403,6 +1430,78 @@ private:
                 std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
                 return Value(lower);
             });
+            // s.substr(start)  or  s.substr(start, length)
+            if (n->property == "substr") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                if (args.empty()) return Value(s);
+                size_t start = (size_t)args[0].numberVal;
+                if (start > s.size()) start = s.size();
+                if (args.size() < 2) return Value(s.substr(start));
+                size_t len = (size_t)args[1].numberVal;
+                if (start + len > s.size()) len = s.size() - start;
+                return Value(s.substr(start, len));
+            });
+            // s.slice(start, end) — like JS slice, end exclusive
+            if (n->property == "slice") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                long long sz = (long long)s.size();
+                long long start = args.empty() ? 0 : (long long)args[0].numberVal;
+                long long end   = args.size() < 2 ? sz : (long long)args[1].numberVal;
+                if (start < 0) start += sz;
+                if (end   < 0) end   += sz;
+                if (start < 0) start = 0;
+                if (end   > sz) end = sz;
+                if (start >= end) return Value(std::string(""));
+                return Value(s.substr((size_t)start, (size_t)(end - start)));
+            });
+            // s.contains(needle) → bool
+            if (n->property == "contains") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                if (args.empty() || !args[0].isString()) return Value(false);
+                return Value(s.find(args[0].stringVal) != std::string::npos);
+            });
+            // s.indexOf(needle) → number (or -1)
+            if (n->property == "indexOf") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                if (args.empty() || !args[0].isString()) return Value(-1.0);
+                auto p = s.find(args[0].stringVal);
+                return Value(p == std::string::npos ? -1.0 : (double)p);
+            });
+            // s.split(sep) → list of substrings
+            if (n->property == "split") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                std::vector<Value> out;
+                if (args.empty() || !args[0].isString() || args[0].stringVal.empty()) {
+                    out.push_back(Value(s));
+                    return Value(std::move(out));
+                }
+                const std::string& sep = args[0].stringVal;
+                size_t start = 0, pos;
+                while ((pos = s.find(sep, start)) != std::string::npos) {
+                    out.push_back(Value(s.substr(start, pos - start)));
+                    start = pos + sep.size();
+                }
+                out.push_back(Value(s.substr(start)));
+                return Value(std::move(out));
+            });
+            // s.trim() → strip whitespace from both ends
+            if (n->property == "trim") return makeNative([s = obj.stringVal](std::vector<Value>) -> Value {
+                size_t a = 0, b = s.size();
+                while (a < b && std::isspace((unsigned char)s[a])) a++;
+                while (b > a && std::isspace((unsigned char)s[b-1])) b--;
+                return Value(s.substr(a, b - a));
+            });
+            // s.replace(old, new) → replace all occurrences
+            if (n->property == "replace") return makeNative([s = obj.stringVal](std::vector<Value> args) -> Value {
+                if (args.size() < 2 || !args[0].isString() || !args[1].isString()) return Value(s);
+                std::string r;
+                const std::string& from = args[0].stringVal;
+                const std::string& to   = args[1].stringVal;
+                if (from.empty()) return Value(s);
+                size_t start = 0, pos;
+                while ((pos = s.find(from, start)) != std::string::npos) {
+                    r.append(s, start, pos - start);
+                    r.append(to);
+                    start = pos + from.size();
+                }
+                r.append(s, start, std::string::npos);
+                return Value(r);
+            });
         }
 
         // Number methods
@@ -1825,6 +1924,89 @@ private:
         env_->define("min", makeNative([](std::vector<Value> args) -> Value {
             if (args.size() < 2) return args.empty() ? Value(0.0) : args[0];
             return Value(std::min(args[0].numberVal, args[1].numberVal));
+        }));
+
+        // env(name) — read a process environment variable.
+        // Returns the value as a string, or "" if unset.
+        env_->define("env", makeNative([](std::vector<Value> args) -> Value {
+            if (args.empty() || !args[0].isString()) return Value(std::string(""));
+            const char* v = std::getenv(args[0].stringVal.c_str());
+            return Value(std::string(v ? v : ""));
+        }));
+
+        // substr(s, start [, length]) — substring helper.
+        env_->define("substr", makeNative([](std::vector<Value> args) -> Value {
+            if (args.empty() || !args[0].isString()) return Value(std::string(""));
+            const std::string& s = args[0].stringVal;
+            if (args.size() < 2) return Value(s);
+            size_t start = (size_t)args[1].numberVal;
+            if (start > s.size()) start = s.size();
+            if (args.size() < 3) return Value(s.substr(start));
+            size_t len = (size_t)args[2].numberVal;
+            if (start + len > s.size()) len = s.size() - start;
+            return Value(s.substr(start, len));
+        }));
+
+        // split(s, sep) — split s by separator, returns list of substrings.
+        env_->define("split", makeNative([](std::vector<Value> args) -> Value {
+            std::vector<Value> out;
+            if (args.empty() || !args[0].isString()) { out.push_back(Value(std::string(""))); return Value(std::move(out)); }
+            const std::string& s = args[0].stringVal;
+            if (args.size() < 2 || !args[1].isString() || args[1].stringVal.empty()) {
+                out.push_back(Value(s));
+                return Value(std::move(out));
+            }
+            const std::string& sep = args[1].stringVal;
+            size_t start = 0, pos;
+            while ((pos = s.find(sep, start)) != std::string::npos) {
+                out.push_back(Value(s.substr(start, pos - start)));
+                start = pos + sep.size();
+            }
+            out.push_back(Value(s.substr(start)));
+            return Value(std::move(out));
+        }));
+
+        // trim(s) — strip whitespace from both ends.
+        env_->define("trim", makeNative([](std::vector<Value> args) -> Value {
+            if (args.empty() || !args[0].isString()) return Value(std::string(""));
+            const std::string& s = args[0].stringVal;
+            size_t a = 0, b = s.size();
+            while (a < b && std::isspace((unsigned char)s[a])) a++;
+            while (b > a && std::isspace((unsigned char)s[b-1])) b--;
+            return Value(s.substr(a, b - a));
+        }));
+
+        // contains(s, needle) → bool
+        env_->define("contains", makeNative([](std::vector<Value> args) -> Value {
+            if (args.size() < 2 || !args[0].isString() || !args[1].isString()) return Value(false);
+            return Value(args[0].stringVal.find(args[1].stringVal) != std::string::npos);
+        }));
+
+        // indexOf(s, needle) → number (or -1)
+        env_->define("indexOf", makeNative([](std::vector<Value> args) -> Value {
+            if (args.size() < 2 || !args[0].isString() || !args[1].isString()) return Value(-1.0);
+            auto p = args[0].stringVal.find(args[1].stringVal);
+            return Value(p == std::string::npos ? -1.0 : (double)p);
+        }));
+
+        // replace(s, old, new) — replace all occurrences.
+        env_->define("replace", makeNative([](std::vector<Value> args) -> Value {
+            if (args.size() < 3 || !args[0].isString() || !args[1].isString() || !args[2].isString()) {
+                return args.empty() ? Value(std::string("")) : args[0];
+            }
+            const std::string& s    = args[0].stringVal;
+            const std::string& from = args[1].stringVal;
+            const std::string& to   = args[2].stringVal;
+            if (from.empty()) return Value(s);
+            std::string r;
+            size_t start = 0, pos;
+            while ((pos = s.find(from, start)) != std::string::npos) {
+                r.append(s, start, pos - start);
+                r.append(to);
+                start = pos + from.size();
+            }
+            r.append(s, start, std::string::npos);
+            return Value(r);
         }));
 
         // Register Sua Framework

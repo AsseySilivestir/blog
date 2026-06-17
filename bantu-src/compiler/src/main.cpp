@@ -548,7 +548,17 @@ int main(int argc, char* argv[]) {
 
     // ─── bantu relay ───
     if (command == "relay") {
-        int port = (argc >= 3) ? std::atoi(argv[2]) : 3478;
+        // Manual port parser (avoids std::atoi → __isoc23_strtol@GLIBC_2.38 at -O2)
+        int port = 3478;
+        if (argc >= 3 && argv[2] && argv[2][0]) {
+            int v = 0;
+            bool ok = true;
+            for (const char* p = argv[2]; *p; ++p) {
+                if (*p < '0' || *p > '9') { ok = false; break; }
+                v = v * 10 + (*p - '0');
+            }
+            if (ok) port = v;
+        }
         return cmdRelay(port);
     }
 
