@@ -4,7 +4,7 @@ A complete blog application with **posts, comments, likes, and shares** — buil
 [Bantu programming language](https://github.com/AsseySilivestir/blog) and the **Sua**
 web framework, persisted on **SQLite**.
 
-> 🎉 **v1.2.0** — The Bantu binary now serves HTTP directly via `sua.server.listen()`.
+> **v1.1.0** — The Bantu binary now serves HTTP directly via `sua.server.listen()`.
 > No Node.js wrapper, no fallback. Real Bantu serving real HTTP.
 
 ---
